@@ -407,8 +407,11 @@ const sum = arr => arr.reduce((s, t) => s + (t.amt || 0), 0);
 const incomeOf = key => S.income.filter(i => i.month === key).reduce((s, i) => s + i.amt, 0);
 
 /* ───────────── 결제 문자 파서 ───────────── */
-const CARD_NAMES = 'KB국민|국민|신한|삼성|현대|롯데|하나|우리|비씨|BC|NH농협|농협|NH|씨티|IBK기업|IBK|카카오뱅크|카카오페이|토스뱅크|토스|케이뱅크|수협|우체국|새마을|SC제일|광주|전북|부산|대구|경남';
+const PAY_NAMES = '토스페이|카카오페이|네이버페이|N페이|삼성페이|페이코|PAYCO|SSG페이|쿠페이|KB Pay|KB페이|SOL페이|하나페이|우리페이|NH페이|애플페이';
+const CARD_NAMES = PAY_NAMES + '|KB국민|국민|신한|삼성|현대|롯데|하나|우리|비씨|BC|NH농협|농협|NH|씨티|IBK기업|IBK|카카오뱅크|토스뱅크|토스|케이뱅크|수협|우체국|새마을|SC제일|광주|전북|부산|대구|경남';
 const CARD_RE = new RegExp('(' + CARD_NAMES + ')\\s*(체크카드|체크|카드|은행)?');
+// '결제'가 들어 있어도 실제 결제가 아닌 알림 (예정·안내·실패·광고)
+const NOT_PAY_RE = /결제\s*(?:예정|대금|예약)|결제일(?!시)|청구|명세서|납부|승인\s*거절|거절|결제\s*실패|실패했|잔액\s*부족|한도\s*초과|\(광고\)|광고|이벤트|쿠폰\s*받|최대\s*[\d,]+\s*원|할인\s*받|결제수단\s*(?:등록|변경)|비밀번호|인증번호/;
 function parseMsg(raw) {
   const r = { raw, src: 'sms', amt: null, merchant: '', card: '', inst: 0, cancel: false, date: fmtDT(new Date()), memo: '' };
   const t = String(raw || '').replace(/\r/g, '').trim();
@@ -421,8 +424,9 @@ function parseMsg(raw) {
   }
   const flat = t.replace(/\s+/g, ' ');
   r.cancel = /취소/.test(flat);
+  if (NOT_PAY_RE.test(flat) && !/승인\s*(?!거절)|결제\s*(?:완료|했|되었|됐)/.test(flat.replace(NOT_PAY_RE, ''))) r.skip = true;
   const cm = flat.match(CARD_RE);
-  if (cm) r.card = cm[1] + (cm[2] && /체크/.test(cm[2]) ? '체크' : cm[2] === '은행' ? '은행' : '카드');
+  if (cm) r.card = /페이|Pay|PAYCO/i.test(cm[1]) ? cm[1] : cm[1] + (cm[2] && /체크/.test(cm[2]) ? '체크' : cm[2] === '은행' ? '은행' : '카드');
   const body = flat.replace(/(누적|잔액|한도|잔여|사용가능|가용)[^0-9]{0,6}-?[\d,]+\s*원?/g, ' ');
   const m = body.match(/(?:₩|KRW|원화)\s*([\d,]+)/) || body.match(/([\d][\d,]{0,14})\s*원/) || body.match(/(?:출금|결제|사용|이체)\s*([\d,]{3,})/);
   if (m) r.amt = num(m[1]);
@@ -439,7 +443,18 @@ function parseMsg(raw) {
     const tm = flat.match(/(\d{1,2}):(\d{2})/);
     if (tm) { const d = new Date(now); d.setHours(+tm[1], +tm[2], 0, 0); r.date = fmtDT(d); }
   }
-  // 사용처: 알려진 토큰을 지우고 남은 것
+  if (!r.amt && !r.memo) r.skip = true;
+  // 사용처 1: 앱 알림 문장형 ("배달의민족에서 12,500원 결제했어요", "가맹점: 배달의민족")
+  const lab = flat.match(/(?:가맹점|사용처|결제처|상호|이용처)\s*[:：]?\s*([^|·\n,]+?)(?=\s*(?:\||·|,|$|[\d][\d,]*\s*원|\d{1,2}[\/.]\d{1,2}|\d{1,2}:\d{2}))/);
+  const atRe = /(?:^|[\s|·\]:])([^\s|·\]:][^|·\]:]{0,30}?)\s*에서\s*(?:[\d][\d,]*\s*원|결제|사용|승인)/;
+  const atLine = t.split('\n').map(l => l.trim()).find(l => atRe.test(l));
+  const at = atLine ? atLine.match(atRe) : flat.match(atRe);
+  const pick = (lab && lab[1]) || (at && at[1]);
+  if (pick) {
+    const cleaned = pick.replace(/\(주\)|㈜|주식회사/g, '').replace(/^.*(?:완료|알림|안내|결제|승인|사용|고객님|회원님)\s+/, '').replace(new RegExp('^(?:' + CARD_NAMES + ')\\s*(?:체크카드|체크|카드|은행)?\\s*'), '').replace(/[()\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (cleaned && !/^[\d,\s원]+$/.test(cleaned)) { r.merchant = cleaned; return r; }
+  }
+  // 사용처 2: 알려진 토큰을 지우고 남은 것 (카드사 문자 형식)
   let s = flat.replace(/\[[^\]]*\]/g, ' ').replace(/\(주\)|㈜|주식회사/g, '').replace(/(누적|잔액|한도|잔여|사용가능|가용).*$/, ' ');
   s = s.replace(new RegExp('(?:' + CARD_NAMES + ')\\s*(?:체크카드|체크|카드|은행)?\\s*\\(?[\\d*]{0,8}\\)?\\s*(?:승인취소|취소|승인|결제|사용|출금)?'), ' ');
   s = s.replace(/[가-힣]{0,3}\*+[가-힣*]{0,3}\s*님?/g, ' ')
@@ -447,9 +462,11 @@ function parseMsg(raw) {
     .replace(/(USD|US\$|EUR|JPY|CNY|GBP|\$|€|¥)\s*[\d,.]+/g, ' ')
     .replace(/일시불|\d{1,2}\s*개월|할부|신용|해외|국내/g, ' ')
     .replace(/\d{1,2}[\/.\-]\d{1,2}(\s*\(?[월화수목금토일]\)?)?/g, ' ').replace(/\d{1,2}:\d{2}(:\d{2})?/g, ' ')
-    .replace(/[()]/g, ' ');
-  const tokens = s.split(/\s+/).filter(w => w && !/^(승인|취소|승인취소|결제|사용|님|체크|카드|체크카드|출금|입금|이체|[\d,*\-.:\/]+)$/.test(w));
-  r.merchant = tokens.join(' ').trim() || '결제';
+    .replace(/[()|·:]/g, ' ')
+    .replace(/(?:결제|승인|사용|출금)\s*(?:완료|했어요|했습니다|되었어요|되었습니다|됐어요|하셨습니다|알림|내역)?|(?:을|를)\s*(?=\s|$)|완료|알림|고객님|회원님/g, ' ');
+  const tokens = s.split(/\s+/).filter(w => w && !/^(승인|취소|승인취소|결제|사용|님|체크|카드|체크카드|출금|입금|이체|금액|결제금액|이용금액|[\d,*\-.:\/]+)$/.test(w))
+    .filter(w => !/(?:습니다|어요|에요|세요|해요|돼요|다)\.?$|^(?:주문하신|주문|상품의?|가|이|은|는|의|님의|고객님의|정상|처리)$/.test(w));
+  r.merchant = tokens.join(' ').trim() || (r.card && /페이|Pay|PAYCO/i.test(r.card) ? r.card + ' 결제' : '결제');
   return r;
 }
 
@@ -483,6 +500,12 @@ function ingest(raw) {
   const p = parseMsg(raw);
   if (!p) return null;
   S.seen[hk] = Date.now();
+  if (p.skip) { ingest.skipped = (ingest.skipped || 0) + 1; return null; }
+  // 같은 결제가 토스와 카드사 앱에서 두 번 알려 오는 경우: 금액이 같고 사용처가 비슷하고 5분 안이면 한 번만
+  const pd = parseDT(p.date), pk = mkey(p.merchant), sign = p.cancel ? -1 : 1;
+  const dup = S.tx.find(x => x.src !== 'fixed' && x.amt === p.amt * sign && Math.abs(parseDT(x.date) - pd) <= 5 * 6e4 &&
+    (mkey(x.merchant) === pk || (pk.length >= 2 && mkey(x.merchant).includes(pk)) || (mkey(x.merchant).length >= 2 && pk.includes(mkey(x.merchant))) || x.merchant === '결제' || p.merchant === '결제'));
+  if (dup) { if ((!dup.card || dup.card === '토스카드') && p.card) dup.card = p.card; ingest.dups = (ingest.dups || 0) + 1; return null; }
   const sg = suggest(p.merchant);
   const t = { id: uid(), date: p.date, amt: (p.amt || 0) * (p.cancel ? -1 : 1), merchant: p.merchant, card: p.card, inst: p.inst, memo: p.memo || '',
     cat: sg ? sg.cat : null, sub: sg ? sg.sub : null, why: sg ? sg.why : '', fixedId: sg ? sg.fixedId || null : null, src: p.src, confirmed: false, needAmt: !p.amt };
@@ -504,6 +527,7 @@ function handleHash() {
   try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { }
   let text; try { text = decodeURIComponent(payload); } catch (e) { text = payload; }
   const parts = text.split(/\n?\s*@@\s*\n?/).map(s => s.trim()).filter(Boolean);
+  ingest.skipped = 0; ingest.dups = 0;
   const added = parts.map(ingest).filter(Boolean);
   save();
   if (added.length) {
@@ -511,7 +535,7 @@ function handleHash() {
     const auto = added.length - toAsk.length;
     if (auto) toast(`취소 ${auto}건을 원래 결제에 맞춰 기록했어요`);
     if (toAsk.length) { queue = toAsk.map(t => t.id); nextInQueue(); }
-  } else if (parts.length) toast('새 결제가 없어요 (이미 기록됨)');
+  } else if (parts.length) toast(ingest.skipped ? '결제 내역이 아닌 알림이라 건너뛰었어요' : ingest.dups ? '이미 기록된 결제예요 (다른 앱 알림과 같은 건)' : '새 결제가 없어요 (이미 기록됨)');
   render();
   return true;
 }
@@ -989,13 +1013,15 @@ function vSet() {
     <div class="lbl" style="margin-bottom:6px">결제 문자 자동화에 붙여 넣을 주소</div>
     <div class="code" id="u1">${esc(u)}#add=</div>
     <div class="row" style="gap:8px;margin-top:8px"><button class="btn sm" data-copy="u1">주소 복사</button><span class="hint" style="margin:0">뒤에 ‘URL 인코딩된 텍스트’ 변수를 붙여요</span></div>
-    <details class="g" style="margin-top:12px"><summary>결제 문자가 오면 자동 기록 (메인)</summary><div><ol class="steps">
-      <li><b>단축어 앱 → 자동화 → ＋</b> 를 누르고 <b>메시지</b>를 고르세요.</li>
-      <li><b>메시지 내용</b>에 <b>승인</b> 입력 (보낸 사람에 카드사 번호를 넣어도 돼요) → <b>즉시 실행</b> 선택, <b>실행 시 알림</b>은 끄세요.</li>
-      <li><b>새로운 빈 자동화</b> → 동작 추가: <b>URL 인코딩</b> (입력: <b>단축어 입력</b>)</li>
-      <li><b>텍스트</b> 동작에 위 주소를 붙이고, 끝에 <b>URL 인코딩된 텍스트</b> 변수를 넣으세요.</li>
-      <li><b>URL 열기</b> 동작 추가 (입력: 텍스트). 끝!</li></ol>
-      <div class="hint">결제 → 문자 도착 → 이 화면이 열리고 추천 항목이 골라져 있어요. 맞으면 <b>저장</b>, 아니면 세부항목 한 번 누르면 끝이라 10초 안쪽이에요.</div></div></details>
+    <details class="g" style="margin-top:12px" open><summary>토스·카드사·은행 앱 알림으로 자동 기록 (메인)</summary><div><ol class="steps">
+      <li><b>단축어 앱 → 자동화 → ＋</b> 에서 <b>앱 알림</b>을 고르고, 앱에 <b>토스</b>와 쓰는 카드사·은행 앱을 넣으세요.</li>
+      <li>조건: <b>제목·부제·메시지</b> 중 하나에 <b>결제</b>가 들어 있을 때 → <b>즉시 실행</b>.</li>
+      <li><b>텍스트</b> 동작: 단축어 입력의 <b>제목</b>, <b>부제</b>, <b>메시지</b>를 한 줄씩 넣으세요. (항목을 고를 수 없으면 <b>단축어 입력</b>만 넣어도 돼요)</li>
+      <li><b>URL 인코딩</b> (입력: 위 텍스트) → <b>텍스트</b>: 위 주소 끝에 <b>URL 인코딩된 텍스트</b> 변수 → <b>URL 열기</b>. 끝!</li></ol>
+      <div class="hint">결제 예정·결제일 안내·광고·결제 실패 알림은 앱이 알아서 건너뛰어요. 토스와 카드사 앱이 같은 결제를 둘 다 알려 와도 5분 안의 같은 금액·사용처는 한 번만 기록해요.</div></div></details>
+    <details class="g"><summary>카드 결제 문자(SMS)로 자동 기록</summary><div><ol class="steps">
+      <li><b>자동화 → ＋ → 메시지</b>, 메시지 내용에 <b>승인</b> → <b>즉시 실행</b>.</li>
+      <li><b>URL 인코딩</b> (입력: 단축어 입력) → <b>텍스트</b>(위 주소 + 인코딩된 텍스트) → <b>URL 열기</b>.</li></ol></div></details>
     <details class="g"><summary>잠금 상태에서도 놓치지 않기 (선택)</summary><div><ol class="steps">
       <li>위 자동화 맨 앞에 <b>텍스트 파일에 추가</b> 동작을 넣으세요. 파일: <b>Shortcuts/가계부대기.txt</b>, 내용: <b>단축어 입력</b> 다음 줄에 <b>@@</b></li>
       <li>새 단축어 <b>가계부</b>: <b>파일 가져오기</b>(가계부대기.txt, 찾지 못하면 오류 끄기) → <b>URL 인코딩</b> → <b>텍스트</b> <span class="code" style="display:inline;padding:2px 6px">${esc(u)}#q=</span> + 인코딩된 텍스트 → <b>URL 열기</b> → <b>텍스트</b>(빈칸 하나) → <b>파일 저장</b>(같은 경로, 덮어쓰기)</li>
@@ -1006,11 +1032,8 @@ function vSet() {
       <li><b>URL 인코딩</b> → <b>텍스트</b>(주소#add= + 인코딩 결과) → <b>URL 열기</b></li></ol></div></details>
     <details class="g"><summary>홈 화면에 추가할 때 주의</summary><div><p class="ink2" style="margin:0;font-size:14px">사파리 공유 → <b>홈 화면에 추가</b>할 때 <b>‘웹 앱으로 열기’를 끄세요.</b> 웹 앱으로 열면 사파리와 저장 공간이 따로 생겨서, 단축어로 들어온 결제가 보이지 않아요. 위의 ‘가계부’ 단축어를 홈 화면에 두는 방법을 가장 추천해요.</p></div></details>
   </section>`;
-  h += `<section class="card"><h2>결제 문자 테스트</h2><textarea class="fld" id="tmsg" placeholder="받은 결제 문자를 붙여 넣어 보세요">[Web발신]
-신한카드(1234)승인 홍*동
-12,500원(일시불)${pad(new Date().getMonth() + 1)}/${pad(new Date().getDate())} 12:34
-스타벅스 성수역점
-누적1,234,560원</textarea><div id="tres" class="meta" style="margin:10px 0 0"></div><div class="row" style="gap:8px;margin-top:10px"><button class="btn sm" id="tparse">읽어 보기</button><button class="btn sm pri" id="tadd">이 문자로 기록</button></div></section>`;
+  h += `<section class="card"><h2>결제 알림 테스트</h2><textarea class="fld" id="tmsg" placeholder="받은 결제 알림이나 문자를 붙여 넣어 보세요">토스뱅크 체크카드
+배달의민족에서 12,500원 결제했어요</textarea><div id="tres" class="meta" style="margin:10px 0 0"></div><div class="row" style="gap:8px;margin-top:10px"><button class="btn sm" id="tparse">읽어 보기</button><button class="btn sm pri" id="tadd">이 내용으로 기록</button></div></section>`;
   h += `<section class="card"><h2>예산 · 기간</h2><div class="set">
     <div class="it"><span>한 달 예산</span><input class="fld num" id="sBud" inputmode="numeric" style="max-width:150px;text-align:right" value="${S.settings.budget ? comma(S.settings.budget) : ''}" placeholder="0"></div>
     <div class="it"><span>한 달 시작일<div class="hint" style="margin:0">월급날이나 카드 결제일 기준</div></span><select class="fld" id="sStart" style="max-width:110px">${Array.from({ length: 28 }, (_, i) => `<option value="${i + 1}" ${S.settings.monthStart === i + 1 ? 'selected' : ''}>매달 ${i + 1}일</option>`).join('')}</select></div></div></section>`;
@@ -1040,8 +1063,8 @@ bind.set = v => {
       cat.subs = cat.subs.filter(s => s.id !== rm.dataset.rmsub); S.tx.forEach(t => { if (t.sub === rm.dataset.rmsub) t.sub = null; }); save(); render();
     }
   });
-  $('#tparse').onclick = () => { const p = parseMsg($('#tmsg').value); const sg = p && suggest(p.merchant); $('#tres').innerHTML = p ? `<span class="pill acc">금액 ${p.amt ? won(p.amt) : '못 찾음'}</span><span class="pill">사용처 ${esc(p.merchant)}</span><span class="pill">${esc(p.card || '카드 미확인')}</span><span class="pill">${p.date.replace('T', ' ')}</span>${p.cancel ? '<span class="pill good">취소</span>' : ''}${sg ? `<span class="pill">추천 ${esc(catName(sg.cat))} · ${esc(subName(sg.cat, sg.sub))}</span>` : '<span class="pill warn">추천 없음</span>'}` : '내용이 비어 있어요'; };
-  $('#tadd').onclick = () => { const t = ingest($('#tmsg').value + (/\d{1,2}:\d{2}/.test($('#tmsg').value) ? '' : '')); if (!t) { toast('이미 기록된 문자예요'); return; } save(); openEditor(t, { incoming: true, left: 0 }); };
+  $('#tparse').onclick = () => { const p = parseMsg($('#tmsg').value); const sg = p && suggest(p.merchant); $('#tres').innerHTML = p && p.skip ? '<span class="pill warn">결제 내역이 아닌 알림으로 보여서 건너뛰어요</span>' : p ? `<span class="pill acc">금액 ${p.amt ? won(p.amt) : '못 찾음'}</span><span class="pill">사용처 ${esc(p.merchant)}</span><span class="pill">${esc(p.card || '카드 미확인')}</span><span class="pill">${p.date.replace('T', ' ')}</span>${p.cancel ? '<span class="pill good">취소</span>' : ''}${sg ? `<span class="pill">추천 ${esc(catName(sg.cat))} · ${esc(subName(sg.cat, sg.sub))}</span>` : '<span class="pill warn">추천 없음</span>'}` : '내용이 비어 있어요'; };
+  $('#tadd').onclick = () => { ingest.skipped = 0; ingest.dups = 0; const t = ingest($('#tmsg').value); if (!t) { toast(ingest.skipped ? '결제 내역이 아닌 알림으로 보여요' : '이미 기록된 결제예요'); return; } save(); openEditor(t, { incoming: true, left: 0 }); };
   $('#sBud').onchange = e => { S.settings.budget = num(e.target.value); e.target.value = S.settings.budget ? comma(S.settings.budget) : ''; save(); toast('예산을 저장했어요'); };
   $('#sStart').onchange = e => { S.settings.monthStart = +e.target.value; cur = nowKey(); save(); toast(`한 달을 매달 ${e.target.value}일부터 계산해요`); };
   $$('[data-c]', v).forEach(row => {
@@ -1074,7 +1097,7 @@ function openEditor(t, opts = {}) {
   draftOpts = opts;
   draft = t ? { ...t } : { id: null, date: fmtDT(new Date()), amt: 0, merchant: '', cat: null, sub: null, card: '', memo: '', src: 'manual' };
   const isNew = !t; const inc = opts.incoming;
-  const kicker = inc ? `결제 문자에서 가져왔어요${opts.left ? ` · ${opts.left}건 더` : ''}` : isNew ? '직접 입력' : '내역 수정';
+  const kicker = inc ? `결제 알림에서 가져왔어요${opts.left ? ` · ${opts.left}건 더` : ''}` : isNew ? '직접 입력' : '내역 수정';
   openSheet(`<div class="sh-head"><span class="k">${kicker}</span><button class="x" id="edX" aria-label="닫기">✕</button></div>
     <div class="amt-in"><input id="edAmt" inputmode="numeric" placeholder="0" value="${draft.amt ? comma(Math.abs(draft.amt)) : ''}" aria-label="금액"><span>원</span></div>
     <div class="fgrid"><input class="fld" id="edMer" placeholder="사용처" value="${esc(draft.merchant)}" aria-label="사용처"><input class="fld" id="edDate" type="datetime-local" value="${esc(draft.date)}" aria-label="날짜와 시간"></div>
