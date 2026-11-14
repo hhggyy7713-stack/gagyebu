@@ -133,6 +133,11 @@ main{display:flex;flex-direction:column;gap:12px;padding-block:4px 20px}
 .tx .t2{font-size:12.5px;color:var(--muted);display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .tx .v{font-weight:700;text-align:right;font-size:15px}
 .tx .v.neg{color:var(--good)}
+/* 왼쪽으로 밀어서 삭제 */
+.swipe{position:relative;overflow:hidden;border-radius:10px}
+.swipe .tx{position:relative;z-index:1;background:var(--surface);touch-action:pan-y;will-change:transform}
+.swipe .tx:active{background:var(--surface-2)}
+.sw-del{position:absolute;right:0;top:0;bottom:0;width:84px;display:flex;align-items:center;justify-content:flex-end;padding-right:22px;background:var(--crit);color:#fff;font-weight:700;font-size:14.5px;border-radius:10px;opacity:0}
 .pill{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:650;padding:2px 7px;border-radius:999px;background:var(--surface-2);color:var(--ink-2);white-space:nowrap}
 .pill.warn{background:color-mix(in srgb,var(--warn) 16%,var(--surface));color:var(--warn)}
 .pill.good{background:color-mix(in srgb,var(--good) 14%,var(--surface));color:var(--good)}
@@ -277,7 +282,7 @@ details.g>div{margin-top:10px}
 
 .toast{position:fixed;left:50%;bottom:calc(92px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:60;background:var(--ink);color:var(--bg);
   padding:10px 16px;border-radius:12px;font-size:14px;font-weight:600;box-shadow:0 6px 18px rgba(0,0,0,.2);display:flex;gap:12px;align-items:center;max-width:calc(100% - 32px)}
-.toast button{color:var(--accent-soft);font-weight:700}
+.toast button{color:var(--accent-soft);font-weight:700;white-space:nowrap;flex:none}
 </style>
 </head>
 <body>
@@ -886,7 +891,57 @@ function txRow(t) {
   if (t.fixedId) tags.push(`<span class="pill acc">${(S.fixed.find(f => f.id === t.fixedId) || {}).kind === 'sub' ? '구독' : '고정'}</span>`);
   if (t.inst > 1) tags.push(`<span class="pill">${t.inst}개월</span>`);
   if (t.amt < 0) tags.push(`<span class="pill good">취소</span>`);
-  return `<button class="tx" data-tx="${t.id}" style="--c:${catColor(t.cat)}"><span class="ico">${esc(nm.slice(0, 1))}</span><span style="min-width:0"><div class="t1 ell">${esc(t.merchant)}</div><div class="t2"><span>${c ? esc(c.name) + (t.sub ? ' · ' + esc(subName(t.cat, t.sub)) : '') : '미분류'}</span>${t.card ? `<span>· ${esc(t.card)}</span>` : ''}<span>· ${t.date.slice(11)}</span>${tags.join('')}</div></span><span class="v num ${t.amt < 0 ? 'neg' : ''}">${won(t.amt)}</span></button>`;
+  return `<div class="swipe" data-sw="${t.id}"><button class="sw-del" data-del="${t.id}" aria-label="${esc(t.merchant)} 삭제">삭제</button><button class="tx" data-tx="${t.id}" style="--c:${catColor(t.cat)}"><span class="ico">${esc(nm.slice(0, 1))}</span><span style="min-width:0"><div class="t1 ell">${esc(t.merchant)}</div><div class="t2"><span>${c ? esc(c.name) + (t.sub ? ' · ' + esc(subName(t.cat, t.sub)) : '') : '미분류'}</span>${t.card ? `<span>· ${esc(t.card)}</span>` : ''}<span>· ${t.date.slice(11)}</span>${tags.join('')}</div></span><span class="v num ${t.amt < 0 ? 'neg' : ''}">${won(t.amt)}</span></button></div>`;
+}
+// ── 밀어서 삭제: 조금 밀면 삭제 버튼이 열리고, 더 길게(또는 열린 상태에서 한 번 더) 밀면 바로 삭제
+const SW_BTN = 84;
+let swOpen = null, swDrag = null, swJust = false;
+function swSet(el, x, anim) {
+  const tx = $('.tx', el), del = $('.sw-del', el);
+  tx.style.transition = del.style.transition = anim ? 'transform .22s ease, width .22s ease' : 'none';
+  tx.style.transform = x ? `translateX(${x}px)` : '';
+  del.style.width = Math.max(SW_BTN, -x) + 'px';
+  del.style.opacity = x ? 1 : 0;
+  el.dataset.x = x;
+}
+function swClose(el) { if (el && el.isConnected) swSet(el, 0, true); if (swOpen === el) swOpen = null; }
+function delTx(id, el) {
+  const i = S.tx.findIndex(x => x.id === id); if (i < 0) return;
+  const [t] = S.tx.splice(i, 1); save(); swOpen = null;
+  const done = () => { render(); toastUndo(`${t.merchant} ${won(t.amt)} 지웠어요`, () => { S.tx.splice(Math.min(i, S.tx.length), 0, t); save(); render(); toast('되돌렸어요'); }); };
+  if (!el) return done();
+  swSet(el, -el.offsetWidth, true);
+  el.style.height = el.offsetHeight + 'px';
+  setTimeout(() => { el.style.transition = 'height .18s ease, opacity .18s ease'; el.style.height = '0px'; el.style.opacity = '0'; }, 160);
+  setTimeout(done, 360);
+}
+function bindSwipe(v) {
+  v.onpointerdown = e => {
+    const el = e.target.closest('.swipe'); if (!el || e.target.closest('.sw-del')) return;
+    if (swOpen && swOpen !== el) swClose(swOpen);
+    swDrag = { el, id: e.pointerId, x0: e.clientX, y0: e.clientY, base: +(el.dataset.x || 0), mode: null };
+  };
+  v.onpointermove = e => {
+    const d = swDrag; if (!d || e.pointerId !== d.id) return;
+    const dx = e.clientX - d.x0, dy = e.clientY - d.y0;
+    if (!d.mode) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      d.mode = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
+      if (d.mode === 'h') try { d.el.setPointerCapture(e.pointerId); } catch (err) { }
+    }
+    if (d.mode !== 'h') return;
+    e.preventDefault();
+    swSet(d.el, Math.max(-d.el.offsetWidth, Math.min(0, d.base + dx)), false);
+  };
+  v.onpointerup = v.onpointercancel = e => {
+    const d = swDrag; if (!d || e.pointerId !== d.id) return; swDrag = null;
+    if (d.mode !== 'h') return;
+    swJust = true; setTimeout(() => swJust = false, 60);
+    const x = +(d.el.dataset.x || 0), w = d.el.offsetWidth;
+    if (x < -Math.max(160, w * 0.5)) delTx(d.el.dataset.sw, d.el);
+    else if (x <= -SW_BTN / 2) { swSet(d.el, -SW_BTN, true); swOpen = d.el; }
+    else swClose(d.el);
+  };
 }
 function calendar(key) {
   const [a, b] = periodRange(key); const days = Math.round((b - a) / 864e5); const vals = new Array(days).fill(0);
@@ -907,7 +962,11 @@ function calendar(key) {
   return h;
 }
 bind.list = v => {
+  bindSwipe(v);
   v.onclick = e => {
+    if (swJust) return;
+    const del = e.target.closest('[data-del]'); if (del) { delTx(del.dataset.del, del.closest('.swipe')); return; }
+    if (swOpen) { swClose(swOpen); return; }
     const m = e.target.closest('[data-mode]'); if (m) { ui.listMode = m.dataset.mode; render(); return; }
     const fc = e.target.closest('[data-fc]'); if (fc) { ui.fcat = fc.dataset.fc; render(); return; }
     const d = e.target.closest('[data-day]'); if (d) { ui.day = ui.day === d.dataset.day ? null : d.dataset.day; ui.listMode = 'list'; render(); return; }
@@ -1293,6 +1352,11 @@ function drawFChips() {
 /* 토스트 */
 let toastT;
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => t.hidden = true, 2400); }
+function toastUndo(msg, undo) {
+  const t = $('#toast'); t.innerHTML = `<span>${esc(msg)}</span><button type="button">되돌리기</button>`; t.hidden = false;
+  $('button', t).onclick = () => { clearTimeout(toastT); t.hidden = true; undo(); };
+  clearTimeout(toastT); toastT = setTimeout(() => t.hidden = true, 5000);
+}
 
 /* ───────────── 시작 ───────────── */
 (function boot() {
