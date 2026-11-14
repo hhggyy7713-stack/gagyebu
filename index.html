@@ -1018,7 +1018,29 @@ bind.stats = v => {
 /* ───────────── 설정 ───────────── */
 function baseURL() { return location.origin + location.pathname; }
 function vSet() {
-  const u = baseURL(); const isLocal = /^(localhost|127\.|\[::1\])/.test(location.hostname) || location.protocol === 'file:';
+  const u = baseURL();
+  const P1T = `단축어를 새로 만들어 줘. 이름은 '가계부 기록'.
+동작은 이 순서로 넣어 줘.
+1. '날짜 포맷 지정': 현재 날짜를 사용자 지정 형식 yyyy-MM-dd HH:mm 으로.
+2. '텍스트': 첫 줄에 1번의 포맷 지정된 날짜, 다음 줄에 단축어 입력(받은 알림의 제목, 부제, 메시지).
+3. '텍스트 파일에 추가': iCloud Drive의 Shortcuts 폴더, 파일 경로 가계부대기.txt 에 2번 텍스트를 추가하고, 그 다음 줄에 @@ 를 붙여. 새로운 줄 만들기는 켜.
+4. '알림 보기': 제목 "이 지출을 가계부에 기록할까요?", 내용은 단축어 입력, 취소 버튼 보기 켜기.
+5. 'URL 인코딩': 2번 텍스트를 인코딩.
+6. '텍스트': ${u}#add= 바로 뒤에 띄어쓰기 없이 5번의 URL 인코딩된 텍스트.
+7. 'URL 열기': 6번 텍스트.`;
+  const P2T = `단축어를 새로 만들어 줘. 이름은 '가계부'.
+동작은 이 순서로 넣어 줘.
+1. '파일 가져오기': iCloud Drive의 Shortcuts 폴더에서 가계부대기.txt. 파일 선택기는 보이지 말고, 파일이 없어도 오류 없이 계속.
+2. 'URL 인코딩': 1번 파일 내용을 인코딩.
+3. '텍스트': ${u}#q= 바로 뒤에 띄어쓰기 없이 2번의 URL 인코딩된 텍스트.
+4. 'URL 열기': 3번 텍스트.
+5. '텍스트': 공백 한 칸.
+6. '파일 저장': 5번 텍스트를 같은 Shortcuts 폴더의 가계부대기.txt 에 저장. 저장 위치 묻기는 끄고, 덮어쓰기는 켜.`;
+  const P3T = `자동화를 만들어 줘.
+조건: 토스, 그리고 내가 쓰는 카드사 앱과 은행 앱에서 온 알림의 제목이나 부제나 메시지에 '결제'가 들어 있을 때.
+실행: 묻지 말고 즉시 실행, 실행 시 알림은 끄기.
+동작: '가계부 기록' 단축어를 실행하고, 받은 알림을 입력으로 넘겨 줘.`;
+  const isLocal = /^(localhost|127\.|\[::1\])/.test(location.hostname) || location.protocol === 'file:';
   const lb = S.settings.lastBackup ? Math.floor((Date.now() - S.settings.lastBackup) / 864e5) : null;
   let h = `<section class="card"><h2>단축어 연결</h2>
     <div class="banner" style="display:block;margin-bottom:12px;background:color-mix(in srgb,var(--accent) 12%,var(--surface))">
@@ -1032,6 +1054,10 @@ function vSet() {
     <div class="lbl" style="margin-bottom:6px">결제 문자 자동화에 붙여 넣을 주소</div>
     <div class="code" id="u1">${esc(u)}#add=</div>
     <div class="row" style="gap:8px;margin-top:8px"><button class="btn sm" data-copy="u1">주소 복사</button><span class="hint" style="margin:0">뒤에 ‘URL 인코딩된 텍스트’ 변수를 붙여요</span></div>
+    <details class="g" style="margin-top:12px"><summary>단축어 대화창에 붙여 넣어 만들기</summary><div>
+      <p class="ink2" style="margin:0 0 10px;font-size:14px">단축어 앱의 <b>＋</b>를 누르면 뜨는 대화창에 아래 글을 하나씩 붙여 넣으세요. 1 → 2 → 3 순서로, 하나가 만들어진 뒤 다음 것을 넣어요. 3번은 <b>자동화 탭의 ＋</b>에서 넣어요.</p>
+      ${[['p1', '1. 단축어 ‘가계부 기록’'], ['p2', '2. 단축어 ‘가계부’ (홈 화면 아이콘)'], ['p3', '3. 자동화 (자동화 탭의 ＋에서)']].map(([id, t]) => `<div class="row" style="justify-content:space-between;margin:12px 0 6px"><b style="font-size:14px">${t}</b><button class="btn sm pri" data-copy="${id}">복사</button></div><div class="code" id="${id}" style="white-space:pre-wrap;word-break:break-all;font-size:12.5px">${esc({p1: P1T, p2: P2T, p3: P3T}[id])}</div>`).join('')}
+      <div class="hint">3번에서 카드사·은행 앱을 묻거나 고르게 하면 실제로 쓰는 앱을 고르세요. 만든 뒤 <b>가계부</b> 단축어를 길게 눌러 <b>공유 → 홈 화면에 추가</b>하면 끝이에요.</div></div></details>
     <details class="g" style="margin-top:12px" open><summary>① 결제 알림 → 자동 기록 (메인)</summary><div><ol class="steps">
       <li><b>자동화 → ＋ → 앱 알림</b>: 토스와 카드사·은행 앱, 조건 <b>결제</b>, <b>즉시 실행</b>. ('승인'으로만 알려 주는 앱은 같은 자동화를 <b>승인</b> 조건으로 하나 더)</li>
       <li>실행할 단축어 <b>가계부 기록</b>의 동작 순서:
