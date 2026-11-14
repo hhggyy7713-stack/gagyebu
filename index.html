@@ -1023,8 +1023,9 @@ function vSet() {
   let h = `<section class="card"><h2>단축어 연결</h2>
     <div class="banner" style="display:block;margin-bottom:12px;background:color-mix(in srgb,var(--accent) 12%,var(--surface))">
       <b>단축어를 직접 만들 필요 없어요.</b> 아이폰 사파리에서 아래 두 버튼을 눌러 받으면 단축어 앱에 바로 추가돼요.
-      <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">${[['가계부 기록', '① 가계부 기록 추가', 'pri'], ['가계부', '② 가계부 (홈 화면 아이콘) 추가', '']].map(([n, label, cls]) => `<a class="btn sm ${cls}" href="shortcuts://import-shortcut?url=${encodeURIComponent(u + 'shortcuts/' + encodeURIComponent(n) + '.shortcut')}&name=${encodeURIComponent(n)}">${label}</a>`).join('')}</div>
-      <div class="hint" style="margin:8px 0 0">버튼을 누르면 단축어 앱이 열리고 <b>단축어 추가</b>가 나와요. 안 되면 파일로 받기: ${['가계부 기록', '가계부'].map(n => `<a href="shortcuts/${encodeURIComponent(n)}.shortcut" download="${n}.shortcut" style="color:var(--accent)">${n}</a>`).join(' · ')} (받은 뒤 파일 앱 → 다운로드에서 눌러 열기)</div>
+      <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">${[['record', '가계부 기록', '① 가계부 기록 받기', 'pri'], ['inbox', '가계부', '② 가계부 (홈 화면 아이콘) 받기', '']].map(([f, n, label, cls]) => `<a class="btn sm ${cls}" href="shortcuts/${f}.shortcut" download="${n}.shortcut">${label}</a>`).join('')}</div>
+      <div class="hint" style="margin:8px 0 0">누르면 <b>다운로드</b>돼요. 사파리 주소창의 <b>↓</b> 또는 <b>파일 앱 → 다운로드</b>에서 받은 파일을 누르면 단축어 앱이 열리고 <b>단축어 추가</b>가 나와요. 같은 이름이 있다고 하면 <b>대치</b>를 고르세요.
+      <br>바로 열기를 시도하려면: ${[['record', '가계부 기록'], ['inbox', '가계부']].map(([f, n]) => `<a href="shortcuts://import-shortcut?url=${encodeURIComponent(u + 'shortcuts/' + f + '.shortcut')}&name=${encodeURIComponent(n)}" style="color:var(--accent)">${n}</a>`).join(' · ')}</div>
       <div class="hint" style="margin:8px 0 0">받은 뒤에는 자동화 하나만 만들면 끝: <b>자동화 → ＋ → 앱 알림</b> → 토스·카드사 앱 → 조건 <b>결제</b> → <b>즉시 실행</b> → <b>가계부 기록</b> 선택.</div>
     </div>
     ${isLocal ? `<div class="banner" style="background:color-mix(in srgb,var(--warn) 14%,var(--surface));margin-bottom:12px"><div class="grow">지금은 이 컴퓨터에서만 열리는 주소예요. 아이폰에서 쓰려면 먼저 인터넷 주소로 올려 주세요 (안내서 1단계).</div></div>` : ''}
