@@ -533,6 +533,7 @@ function handleHash() {
   if (h.startsWith('#add=')) payload = h.slice(5);
   else if (h.startsWith('#q=')) payload = h.slice(3);
   else return false;
+  autoCloseTab = h.startsWith('#add=');
   try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { }
   let text; try { text = decodeURIComponent(payload); } catch (e) { text = payload; }
   const parts = text.split(/\n?\s*@@\s*\n?/).map(s => s.trim()).filter(Boolean);
@@ -544,7 +545,9 @@ function handleHash() {
     const auto = added.length - toAsk.length;
     if (auto) toast(`취소 ${auto}건을 원래 결제에 맞춰 기록했어요`);
     if (toAsk.length) { queue = toAsk.map(t => t.id); nextInQueue(); }
-  } else if (parts.length) toast(ingest.skipped ? '결제 내역이 아닌 알림이라 건너뛰었어요' : ingest.dups ? '이미 기록된 결제예요 (다른 앱 알림과 같은 건)' : '새 결제가 없어요 (이미 기록됨)');
+  }
+  if (!added.some(t => !t.confirmed)) scheduleTabClose(1800);
+  if (!added.length && parts.length) toast(ingest.skipped ? '결제 내역이 아닌 알림이라 건너뛰었어요' : ingest.dups ? '이미 기록된 결제예요 (다른 앱 알림과 같은 건)' : '새 결제가 없어요 (이미 기록됨)');
   render();
   return true;
 }
@@ -1099,8 +1102,16 @@ bind.set = v => {
 };
 
 /* ───────────── 바텀시트 ───────────── */
-function openSheet(html) { $('#sheet').innerHTML = `<div class="grab"></div>` + html; $('#sheetWrap').hidden = false; $('#sheet').scrollTop = 0; document.body.style.overflow = 'hidden'; }
-function closeSheet() { $('#sheetWrap').hidden = true; document.body.style.overflow = ''; }
+// 알림으로 열린 탭은 기록이 끝나면 스스로 닫아서 사파리 탭이 쌓이지 않게 함
+// (사파리는 다른 앱이 열어 준, 방문 기록이 1개뿐인 탭만 스크립트로 닫을 수 있음)
+let autoCloseTab = false, closeTimer = null;
+function scheduleTabClose(ms = 900) {
+  if (!autoCloseTab) return;
+  clearTimeout(closeTimer);
+  closeTimer = setTimeout(() => { if (!$('#sheetWrap').hidden) return; autoCloseTab = false; try { window.close(); } catch (e) { } }, ms);
+}
+function openSheet(html) { clearTimeout(closeTimer); $('#sheet').innerHTML = `<div class="grab"></div>` + html; $('#sheetWrap').hidden = false; $('#sheet').scrollTop = 0; document.body.style.overflow = 'hidden'; }
+function closeSheet() { $('#sheetWrap').hidden = true; document.body.style.overflow = ''; if (autoCloseTab) scheduleTabClose(); }
 $('#backdrop').onclick = () => { closeSheet(); render(); };
 
 let draft = null, draftOpts = {};
